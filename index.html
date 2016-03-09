@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Hyperion Web UI</title>
+
+	<script type="text/javascript" src="js/jquery-1.7.1.min.js"></script>
+	<script type="text/javascript" src="js/jquery.wheelcolorpicker.js"></script>
+	<link type="text/css" rel="stylesheet" href="css/wheelcolorpicker.dark.css" />
+
+	<script language="javascript" src="js/script.js"></script>
+  	<link rel="stylesheet" type="text/css" href="css/style.css">
+    <link href='https://fonts.googleapis.com/css?family=Lato:400' rel='stylesheet' type='text/css'>
+
+</head>
+<body>
+	<header>
+		<h1>Hyperion Web UI</h1>
+	</header>
+
+	<div id="settings">
+		<code>
+			{{range .Transform}}
+				"blacklevel": {{.Blacklevel}},
+				"gamma": {{.Gamma}},
+				"id": {{.Id}},
+				"saturationGain": {{.SaturationGain}},
+				"threshold": {{.Threshold}},
+				"valueGain": {{.ValueGain}},
+				"whitelevel": {{.Whitelevel}},
+			{{end}}
+		</code>
+	</div>
+
+	<div class="result" style="display: none;">Success!</div>
+	<div class="error" style="display: none;">Error!</div>
+
+	<div class="forms">
+		<div>
+			<form id="static_form" method="POST">
+				<h2 id="h2-static">Static Color</h2>
+				<input type="text" class="colorpicker" />
+				<ul class="verticalList">
+					<li><div><input id="r" type="number" min="0" max="255" value="0" name="r" class="color-field vertical"></div></li>
+					<li><div><input id="g" type="number" min="0" max="255" value="0" name="g" class="color-field vertical"></div></li>
+					<li><div><input id="b" type="number" min="0" max="255" value="0" name="b" class="color-field vertical"></div></li>
+				<ul>
+				<br>
+				<input id="colorSubmit" class="button buttonFix" type="submit" value="Submit">
+			</form>
+		</div>
+
+		<div class="forms" id="smallerForms">
+			<div class="wider_container">
+				<form id="color_form" method="POST">
+					<h2>Colorname</h2>
+					<div class="demo">
+					  <span class="twitter-typeahead">
+					    <input class="typeahead tt-input color-field" id="colorname" name="colorName" type="text" autofocus type="text" placeholder="Colorname" autocomplete="off" spellcheck="false" dir="auto">
+					    <div class="tt-menu"></div>
+					  </span>
+					</div>
+				
+
+					<br>
+					<input type="submit" class="button buttonFix" value="Submit">
+				</form>
+			</div>
+
+			<div class="smaller_container">
+				<form id="valueGain_form" method="POST">
+					<h2>Value</h2>
+					<input type="number" min="0" max="10" step="0.5" value="10" name="valueGain" class="value-field">
+					<br>
+					<input type="submit" class="button buttonFix" value="Submit">
+				</form>
+			</div>
+
+			<div class="wider_container">
+				<form id="effect_form" method="POST">
+					<h2>Effect</h2>
+					<select name="effect">
+						{{range .Effects}}
+							<option value="{{.Name}}">{{.Name}}</option>
+						{{end}}
+					</select>
+					<br>
+					<input type="submit" class="button buttonFix" value="Submit">
+				</form>
+			</div>
+
+			<div class="smaller_container">
+				<h2>Control hyperion</h2>
+				<ul id="controlList">
+					<li><div>
+						<form id="clear_form" method="POST">
+							<input type="hidden" name="clear" value="clear">
+							<input type="submit" class="button" value="Clear">
+						</form>
+					</div></li>
+					<li><div>
+						<form id="restart_form" method="POST">
+							<input type="hidden" name="restart" value="restart">
+							<input type="submit" class="button" value="Restart">
+						</form>
+					</div></li>
+					<li><div>
+						<form id="start_form" method="POST">
+							<input type="hidden" name="start" value="start">
+							<input type="submit" class="button" value="Start">
+						</form>
+					</div></li>
+					<li><div>
+						<form id="stop_form" method="POST">
+							<input type="hidden" name="stop" value="stop">
+							<input type="submit" class="button" value="Stop">
+						</form>
+					</div></li>
+				<ul>
+			</div>
+		</div>
+
+	</div>
+	<script type="text/javascript">
+		$(function() {
+			$('#color').wheelColorPicker();
+		});
+	</script>
+
+	<script type="text/javascript" src="js/typeahead.bundle.js"></script>
+    <script src="js/autocomplete.js"></script>
+</body>
+</html>
