@@ -86,7 +86,9 @@ type rgb struct {
 	b int
 }
 
+var serverInfo ServerInfo
 var lastColor rgb = rgb{ r: -1, g: -1, b: -1 }
+var lastValue float64
 var isClear bool = false
 var effectRunning bool = false
 var hasBeenHome bool
@@ -96,7 +98,6 @@ var SERVERPATH string
 
 func getServerInfo() (ServerInfo, error) {
 	var info ServerInfoWrapper
-	var serverInfo ServerInfo
 	conn, err := net.Dial("tcp", HYPERION_SERVER)
 	if err != nil {
         return serverInfo, err
@@ -205,7 +206,7 @@ func handlerRoot(w http.ResponseWriter, r *http.Request) {
 	var response = sshCommand("systemctl status hyperion", HYPERION_HOST)
 
 	if strings.Contains(response, "active (running)") {
-		serverInfo, err := getServerInfo()
+		serverInfo, err = getServerInfo()
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 		} else {
@@ -296,9 +297,10 @@ func handlerValueGain(w http.ResponseWriter, r *http.Request) {
 	    }
 
 	    p := i * 10
-	    percentage := strconv.FormatFloat(p, 'f', 0, 32)
-	    i = i / 10 // want numbers between [0-1]
+	    percentage := strconv.FormatFloat(i, 'f', 0, 32)
+	    i = i / 100 // want numbers between [0-1]
 	    valueGain = strconv.FormatFloat(i, 'f', 2, 32) // float to string
+	    //fmt.Printf("ValueGain is: %s", valueGain)
 
 		var resp string
 		hyperionResp, err := sendToHyperion(hypValueGain(valueGain))
@@ -308,6 +310,7 @@ func handlerValueGain(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp = fmt.Sprintf("%s", hyperionResp)
 			log.Printf("Setting the value to %s%%", percentage)
+			lastValue = p / 10;
 		}
 		fmt.Fprint(w, resp)
 }
@@ -347,6 +350,41 @@ func handlerClear(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Cleared all priroity channels")
 		}
 	}
+	fmt.Fprint(w, resp)
+}
+
+func handlerEffectList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+
+	var resp string
+	var effect Effect
+	resp = "{\"effects\":["
+
+	for i := 0; i < len(serverInfo.Effects); i++ {
+		effect = serverInfo.Effects[i]
+		resp += "{\"name\": \"" + effect.Name + "\"}"
+
+		if i < len(serverInfo.Effects)-1 {
+			resp += ", "
+		}
+	}
+
+	resp += "]}"
+
+	fmt.Fprint(w, resp)
+}
+
+func handlerGetValueGain(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+
+	var resp = fmt.Sprintf("{\"valueGain\": \"%f\"}", lastValue)
+	fmt.Fprint(w, resp)
+}
+
+func handlerExists(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+
+	var resp = "{\"success\": \"true\"}"
 	fmt.Fprint(w, resp)
 }
 
@@ -443,10 +481,9 @@ func sshCommand(cmd string, sshAdress string) string {
 }
 
 func isDeviceHome() bool {
-	if strings.Contains(sshCommand("nmap -sP 192.168.0.1/24", ROUTER_HOST), SEARCHFOR) ||
-		strings.Contains(sshCommand("nmap -sP 192.168.0.2/24", ROUTER_HOST), SEARCHFOR) ||
+	if (strings.Contains(sshCommand("nmap -sn 192.168.0.96", ROUTER_HOST), SEARCHFOR) ||
 		strings.Contains(sshCommand("/etc/config/show_wifi_clients.sh",
-			ROUTER_HOST), strings.ToLower(SEARCHFOR)) {
+			ROUTER_HOST), strings.ToLower(SEARCHFOR))) {
 		hasBeenHome = true
 		//log.Printf("Found " + SEARCHFOR)
 		return true
@@ -456,19 +493,18 @@ func isDeviceHome() bool {
 	}
 }
 
-func newDay() {
-	hasBeenHome = false
-}
-
 func autoON() {
+	hasBeenHome = false
 	for {
-		for time.Now().Hour() >= 16 || time.Now().Hour() <= 22 {
+		for time.Now().Hour() >= 16 && time.Now().Hour() <= 22 {
+
+			isDeviceHome := isDeviceHome()
 
 			log.Printf("autoON:\tisDeviceHome: %t\t!isClear: %t\t!effectRunning: %t\tlastColor: %d",
-				isDeviceHome(), !isClear, !effectRunning, lastColor)
+				isDeviceHome, !isClear, !effectRunning, lastColor)
 
 			// automatic turn on
-			if (isDeviceHome() && !isClear && !effectRunning && lastColor == rgb{ r: 0, g: 0, b: 0 }) {
+			if (isDeviceHome && !isClear && !effectRunning && lastColor == rgb{ r: 0, g: 0, b: 0 }) {
 				newColor := rgb{ r: 255, g: 111, b: 3 }
 				sendToHyperion(hypStructStaticColor(newColor))
 				sendToHyperion(hypValueGain("1"))
@@ -478,23 +514,25 @@ func autoON() {
 				isClear = false
 				return
 			} else {
-				time.Sleep(5 * time.Second) // sleep for a bit
+				time.Sleep(30 * time.Second) // sleep for a bit
 			}
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(30 * time.Second)
 	}
 }
 
 
 func autoOFF() {
 	for {
-		for time.Now().Hour() >= 21 || time.Now().Hour() <= 5 {
+		for time.Now().Hour() >= 22 || time.Now().Hour() <= 5 {
 
-			log.Printf("autoOFF:\tisDeviceHome: %t\t!isClear: %t\thasBeenHome: %t\tlastColor: %d",
-				isDeviceHome(), !isClear, hasBeenHome, lastColor)
+			isDeviceHome := isDeviceHome()
+
+			log.Printf("autoOFF:\t!isDeviceHome: %t\t!isClear: %t\thasBeenHome: %t\tlastColor: %d",
+				!isDeviceHome, !isClear, hasBeenHome, lastColor)
 
 			// automatic turn off
-			if (hasBeenHome && !isDeviceHome() && !isClear && lastColor != rgb{ r: 0, g: 0, b: 0 }) {
+			if (!isDeviceHome && !isClear && hasBeenHome && lastColor != rgb{ r: 0, g: 0, b: 0 }) {
 				newColor := rgb{ r: 0, g: 0, b: 0 }
 				sendToHyperion(hypStructStaticColor(newColor))
 
@@ -502,11 +540,12 @@ func autoOFF() {
 				log.Printf("autoOFF: Setting the color to: %d %d %d", lastColor.r, lastColor.g, lastColor.b)
 				isClear = false
 				hasBeenHome = false
+				return
 			} else {
-				time.Sleep(5 * time.Second) // sleep for a bit
+				time.Sleep(30 * time.Second) // sleep for a bit
 			}
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(30 * time.Second)
 	}
 }
 
@@ -518,12 +557,18 @@ func main() {
         log.Fatal(err)
     }
 
-    go autoON()
-    go autoOFF()
+    /*go autoON()
+    //go autoOFF() // not really wanted since phone disconnects from wifi after 10 minutes.
+    
     // launch autoON every day at 16:00
     gocron.Every(1).Day().At("16:00").Do(autoON)
-    // reset hasBeenHome to false every new "day"
-    gocron.Every(1).Day().At("05:00").Do(newDay)
+    // remove, clear and next_run
+    _, time := gocron.NextRun()
+    fmt.Println(time)
+
+    gocron.Remove(autoON)*/
+
+    // function Start start all the pending jobs
     gocron.Start()
 
 	// Get current working directory
@@ -542,8 +587,11 @@ func main() {
 	if SERVERPATH[len(SERVERPATH)-1] != '/' {
 		SERVERPATH += "/"
 	}
+
+	serverInfo, err = getServerInfo()
 	
 	loadColors()
+	lastValue = serverInfo.Transform[0].ValueGain
 
 	http.HandleFunc("/", handlerRoot)
 	http.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(SERVERPATH+"/css"))))
@@ -552,6 +600,9 @@ func main() {
 	http.HandleFunc("/set_static", handlerStaticColor)
 	http.HandleFunc("/set_value_gain", handlerValueGain)
 	http.HandleFunc("/set_effect", handlerEffect)
+	http.HandleFunc("/get_value_gain", handlerGetValueGain)
+	http.HandleFunc("/get_effect_list", handlerEffectList)
+	http.HandleFunc("/host_exists", handlerExists)
 	http.HandleFunc("/do_clear", handlerClear)
 	http.HandleFunc("/do_restart", handlerRestart)
 	http.HandleFunc("/do_start", handlerStart)
