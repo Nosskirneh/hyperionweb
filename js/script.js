@@ -72,7 +72,7 @@ $(function() { $('.colorpicker').wheelColorPicker(); }); // colorpicker init
 
 // list of colors
 var color_array = [];
-$.get('http://andreashenriksson.se:1234/js/colors.txt', function(data) {
+$.get('https://hyperionweb.andreashenriksson.se/js/colors.txt', function(data) {
 	var hasNumber = /\d/;
     var lines=data.split('\n');
     for (var i = 0; i < lines.length; i++){

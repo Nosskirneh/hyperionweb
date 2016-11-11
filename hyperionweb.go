@@ -557,7 +557,8 @@ func main() {
         log.Fatal(err)
     }
 
-    /*go autoON()
+    /*
+    go autoON()
     //go autoOFF() // not really wanted since phone disconnects from wifi after 10 minutes.
     
     // launch autoON every day at 16:00
@@ -566,10 +567,11 @@ func main() {
     _, time := gocron.NextRun()
     fmt.Println(time)
 
-    gocron.Remove(autoON)*/
+    gocron.Remove(autoON)
 
     // function Start start all the pending jobs
     gocron.Start()
+    */
 
 	// Get current working directory
 	pwd, err := os.Getwd()
