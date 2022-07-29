@@ -15,26 +15,18 @@ import (
     "os"
     "bufio"
     "strconv"
-    "time"
     "strings"
-    "io/ioutil"
-    "github.com/jasonlvhit/gocron"
-    "golang.org/x/crypto/ssh"
+    "os/exec"
 )
 
 const (
     // change these to your liking
-    HYPERION_IP         = "192.168.0.120"
+    HYPERION_IP         = "127.0.0.1"
     WEB_UI_HOST_PORT    = "1234"
-    PRIORITY            = "0"
-    SEARCHFOR           = "A0:B1:C2:D3:E4:F5"
-    ROUTER_HOST         = "192.168.0.1:22"
-    USER                = "myUser"
+    PRIORITY            = "1"
 
     JSON_PORT           = "19444"
-    SSH_PORT            = "22"
     HYPERION_SERVER     = HYPERION_IP+":"+JSON_PORT
-    HYPERION_HOST       = HYPERION_IP+":"+SSH_PORT
 )
 
 type Args struct {
@@ -103,9 +95,9 @@ func getServerInfo() (ServerInfo, error) {
         return serverInfo, err
     }
 
-    fmt.Fprint(conn, `{"command":"serverinfo"}`+"\n")
+    fmt.Fprint(conn, `{"command":"serverinfo", "tan":1}`+"\n")
 
-    line, _, err := bufio.NewReader(conn).ReadLine()
+    line, _, err := bufio.NewReaderSize(conn, 32 * 1000).ReadLine()
     if err != nil {
         return serverInfo, err
     }
@@ -164,46 +156,50 @@ func sendToHyperion(s string) (string, error) {
     var response [1024]byte
     n, err := conn.Read(response[:])
     if err != nil {
+        log.Printf("n: %s", string(response[:n]))
         return "", err
     }
     return string(response[:n]), nil
 }
 
 func hypStaticColor(r, g, b string) string {
-    return fmt.Sprintf(`{"color":[%s,%s,%s],"command":"color","priority":%s}`+"\n",
+    return fmt.Sprintf(`{"color":[%s,%s,%s],"command":"color","priority":%s,"origin":"HyperionWeb"}`+"\n",
         r, g, b, PRIORITY)
 }
 
 func hypStructStaticColor(color rgb) string {
-    return fmt.Sprintf(`{"color":[%d,%d,%d],"command":"color","priority":%s}`+"\n",
+    return fmt.Sprintf(`{"color":[%d,%d,%d],"command":"color","priority":%s,"origin":"HyperionWeb"}`+"\n",
         color.r, color.g, color.b, PRIORITY)
 }
 
 func hypValueGain(n string) string {
-    return fmt.Sprintf(`{"command":"transform","transform":{"valueGain":%s}}`+"\n", n)
+    return fmt.Sprintf(`{"command":"adjustment","adjustment":{"brightness":%s}}`+"\n", n)
 }
 
 func hypEffect(n string) string {
-    return fmt.Sprintf(`{"command":"effect","effect":{"name":"%s"},"priority":%s}`+"\n",
+    return fmt.Sprintf(`{"command":"effect","effect":{"name":"%s"},"priority":%s,"origin":"HyperionWeb"}`+"\n",
         n, PRIORITY)
 }
 
 func hypColor(n string) string {
-    return fmt.Sprintf(`{"command":"color","color":{"name":"%s"},"priority":%s}`+"\n",
+    return fmt.Sprintf(`{"command":"color","color":{"name":"%s"},"priority":%s,"origin":"HyperionWeb"}`+"\n",
         n, PRIORITY)
 }
 
 func hypClear() string {
-    return `{"command":"clear","priority":0}` + "\n"
+    return `{"command":"clear","priority":1}` + "\n"
 }
 
 func handlerRoot(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "text/html")
 
-    var err error
     var t *template.Template
     var b bytes.Buffer
-    var response = sshCommand("systemctl status hyperion", HYPERION_HOST)
+    var err, response, _ = runCommand("systemctl status hyperion@pi")
+    if err != nil {
+        log.Printf("could not run command: %v\n", err)
+        return
+    }
 
     if strings.Contains(response, "active (running)") {
         serverInfo, err = getServerInfo()
@@ -298,12 +294,9 @@ func handlerValueGain(w http.ResponseWriter, r *http.Request) {
 
         p := i * 10
         percentage := strconv.FormatFloat(i, 'f', 0, 32)
-        i = i / 100 // want numbers between [0-1]
-        valueGain = strconv.FormatFloat(i, 'f', 2, 32) // float to string
-        //fmt.Printf("ValueGain is: %s", valueGain)
 
         var resp string
-        hyperionResp, err := sendToHyperion(hypValueGain(valueGain))
+        hyperionResp, err := sendToHyperion(hypValueGain(percentage))
 
         if err != nil {
             resp = err.Error()
@@ -396,11 +389,11 @@ func handlerRestart(w http.ResponseWriter, r *http.Request) {
     if restart != "restart" {
         resp = "<code>NOPE</code>"
     } else {
-        sshCommand("systemctl restart hyperion", HYPERION_HOST)
+        runCommand("systemctl restart hyperion@pi")
         resp = "<code class='feedback'>Restarted hyperion</code>"
         isClear = true;
         log.Printf("Restarted hyperion")
-        }
+    }
     fmt.Fprint(w, resp)
 }
 
@@ -412,11 +405,11 @@ func handlerStart(w http.ResponseWriter, r *http.Request) {
     if start != "start" {
         resp = "<code>NOPE</code>"
     } else {
-        sshCommand("systemctl start hyperion", HYPERION_HOST)
+        runCommand("systemctl start hyperion@pi")
         resp = "<code class='feedback'>Started hyperion</code>"
         isClear = true;
         log.Printf("Started hyperion")
-        }
+    }
     fmt.Fprint(w, resp)
 }
 
@@ -428,151 +421,28 @@ func handlerStop(w http.ResponseWriter, r *http.Request) {
     if stop != "stop" {
         resp = "<code>NOPE</code>"
     } else {
-        sshCommand("systemctl stop hyperion", HYPERION_HOST)
+        runCommand("systemctl stop hyperion@pi")
         resp = "<code class='feedback'>Stopped hyperion</code>"
         isClear = true;
         log.Printf("Stopped hyperion")
-        }
+    }
     fmt.Fprint(w, resp)
 }
 
-func sshCommand(cmd string, sshAdress string) string {
-    signer, err := ssh.ParsePrivateKey(publicKey)
+func runCommand(command string) (error, string, string) {
+    var stdout bytes.Buffer
+    var stderr bytes.Buffer
+    cmd := exec.Command("bash", "-c", command)
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    err := cmd.Run()
     if err != nil {
-        log.Fatalf("parse key failed:%v", err)
+        log.Printf("err: %s, out: %s, err: %s", err, stdout.String(), stderr.String())
     }
-    // An SSH client is represented with a ClientConn. Currently only
-    // the "password" authentication method is supported.
-    //
-    // To authenticate with the remote server you must pass at least one
-    // implementation of AuthMethod via the Auth field in ClientConfig.
-    config := &ssh.ClientConfig{
-        User: "root",
-        Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-    }
-
-    client, err := ssh.Dial("tcp", sshAdress, config)
-    if err != nil {
-        log.Printf("SSH: Failed to dial. %s", err.Error())
-    }
-
-    // Each ClientConn can support multiple interactive sessions,
-    // represented by a Session.
-    session, err := client.NewSession()
-    if err != nil {
-        log.Printf("SSH: Failed to create session. %s", err.Error())
-    }
-    defer session.Close()
-
-    // Once a Session is created, you can execute a single command on
-    // the remote side using the Run method.
-    var b bytes.Buffer
-    session.Stdout = &b
-
-    err = session.Run(cmd);
-    ee, _ := err.(*ssh.ExitError)
-
-    if err != nil && ee.Waitmsg.ExitStatus() != 3 {
-        log.Printf("SSH: Failed to run. %s", err.Error())
-
-}
-    //fmt.Println("%s", b.String()) //debugging
-    return b.String()
-}
-
-func isDeviceHome() bool {
-    if (strings.Contains(sshCommand("nmap -sn 192.168.0.96", ROUTER_HOST), SEARCHFOR) ||
-        strings.Contains(sshCommand("/etc/config/show_wifi_clients.sh",
-            ROUTER_HOST), strings.ToLower(SEARCHFOR))) {
-        hasBeenHome = true
-        //log.Printf("Found " + SEARCHFOR)
-        return true
-    } else {
-        //log.Printf("Nope, couldn't find any " + SEARCHFOR)
-        return false
-    }
-}
-
-func autoON() {
-    hasBeenHome = false
-    for {
-        for time.Now().Hour() >= 16 && time.Now().Hour() <= 22 {
-
-            isDeviceHome := isDeviceHome()
-
-            log.Printf("autoON:\tisDeviceHome: %t\t!isClear: %t\t!effectRunning: %t\tlastColor: %d",
-                isDeviceHome, !isClear, !effectRunning, lastColor)
-
-            // automatic turn on
-            if (isDeviceHome && !isClear && !effectRunning && lastColor == rgb{ r: 0, g: 0, b: 0 }) {
-                newColor := rgb{ r: 255, g: 111, b: 3 }
-                sendToHyperion(hypStructStaticColor(newColor))
-                sendToHyperion(hypValueGain("1"))
-
-                lastColor = newColor
-                log.Printf("autoON: Setting the color to: %d %d %d", lastColor.r, lastColor.g, lastColor.b)
-                isClear = false
-                return
-            } else {
-                time.Sleep(30 * time.Second) // sleep for a bit
-            }
-        }
-        time.Sleep(30 * time.Second)
-    }
-}
-
-
-func autoOFF() {
-    for {
-        for time.Now().Hour() >= 22 || time.Now().Hour() <= 5 {
-
-            isDeviceHome := isDeviceHome()
-
-            log.Printf("autoOFF:\t!isDeviceHome: %t\t!isClear: %t\thasBeenHome: %t\tlastColor: %d",
-                !isDeviceHome, !isClear, hasBeenHome, lastColor)
-
-            // automatic turn off
-            if (!isDeviceHome && !isClear && hasBeenHome && lastColor != rgb{ r: 0, g: 0, b: 0 }) {
-                newColor := rgb{ r: 0, g: 0, b: 0 }
-                sendToHyperion(hypStructStaticColor(newColor))
-
-                lastColor = newColor
-                log.Printf("autoOFF: Setting the color to: %d %d %d", lastColor.r, lastColor.g, lastColor.b)
-                isClear = false
-                hasBeenHome = false
-                return
-            } else {
-                time.Sleep(30 * time.Second) // sleep for a bit
-            }
-        }
-        time.Sleep(30 * time.Second)
-    }
+    return err, stdout.String(), stderr.String()
 }
 
 func main() {
-    // get ssh public key, goes in main to avoid multiple open files.
-    var err error
-    publicKey, err = ioutil.ReadFile("/home/" + USER + "/.ssh/id_rsa")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    /*
-    go autoON()
-    //go autoOFF() // not really wanted since phone disconnects from wifi after 10 minutes.
-
-    // launch autoON every day at 16:00
-    gocron.Every(1).Day().At("16:00").Do(autoON)
-    // remove, clear and next_run
-    _, time := gocron.NextRun()
-    fmt.Println(time)
-
-    gocron.Remove(autoON)
-
-    // function Start start all the pending jobs
-    gocron.Start()
-    */
-
     // Get current working directory
     pwd, err := os.Getwd()
     if err != nil {
@@ -591,6 +461,10 @@ func main() {
     }
 
     serverInfo, err = getServerInfo()
+    if err != nil {
+        log.Printf("Could not get server info: %s", err)
+        return
+    }
 
     loadColors()
     lastValue = serverInfo.Transform[0].ValueGain
